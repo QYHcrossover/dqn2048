@@ -19,12 +19,13 @@ class Agent:
 		self,
 		batch_size = 32,
 		max_eposide = 200000,
-		train_per_iter = 400,
+		save_per_iter = 400,
 		memory_size = 6000,
 		):
 		#dqn基础参数
 		self.epsilon = 0.9 #初始探索率较高
 		self.reward_decay = 0.9 #衰减因子
+		self.memory_size = memory_size
 		self.memory = deque(maxlen=memory_size) #经验池
 		#network相关
 		self.batch_size = batch_size #batch_size
@@ -34,10 +35,14 @@ class Agent:
 		self.loss_fn = nn.MSELoss()
 		#训练控制相关
 		self.max_eposide = max_eposide #最大eposide大小
-		self.train_per_iter = train_per_iter #n，每进行x步网络更新一次
+		self.save_per_iter = save_per_iter #n，每训练n步保存一次
 		self.eposide = 0 #当前eposide数
+		self.train_steps = 0 #当前训练了多少步
 		self.total_steps = 0 #总共走了多少步
 		self.record = [] #保存游戏数据
+		#最优参数
+		self.max_num = 0
+		self.max_score = 0
 
 	def transform_state(self,state):
 		assert type(state) in (tuple,np.ndarray)
@@ -105,26 +110,29 @@ class Agent:
 				nextstate = game.matrix
 				self.memory.append((state,action,nextstate,reward,game.isover)) #保存状态
 				(local_steps,self.total_steps) = (local_steps+1,self.total_steps+1) #局部计数器和全局计数器加一
-				#每隔 train_per_iter轮次开展训练
-				if self.total_steps % self.train_per_iter == 0:
-					print("the {}th training begins".format(self.total_steps//self.train_per_iter))
+				if len(self.memory) >= self.memory_size:
+					self.train_steps += 1
 					self.update()
-					print("the {}th training ends".format(self.total_steps//self.train_per_iter))
-					if self.total_steps//self.train_per_iter % 20 == 0:
-						torch.save(self.network.state_dict(), './parameter.pkl')
+					# print("the {}th training ends".format(self.train_steps))
+					if self.train_steps % self.save_per_iter == 0:
+						torch.save(self.network.state_dict(), './parameter{}.pkl'.format(self.train_steps // self.save_per_iter%20))
 						print("successfully saved")
-				# print("eposide:{} local_steps:{} current_score:{}".format(self.eposide,local_steps,game.score)) #打印必要信息
 				#本轮游戏结束退出当前循环,否则开始下一步
 				if game.isover: 
 					break
 				else:
 					state = nextstate
-			print("{}ith eposide : gamescore={} maxnumber={} steps = {}".format(self.eposide,game.score,game.maxnum,local_steps))
+			self.max_num = game.maxnum if game.maxnum>self.max_num else self.max_num
+			self.max_score = game.score if game.score>self.max_score else self.max_score
+			print("\nEposide{} finished with score:{} maxnumber:{} steps={} ,details:".format(self.eposide,game.score,game.maxnum,local_steps))
+			print(game.matrix,"epsilon:{}".format(self.epsilon))
 			self.record.append((self.eposide,game.score,game.maxnum,local_steps)) #每局游戏记录局号、一局走了几步、游戏分数
+			#更新最优参数
 			self.eposide += 1
+		torch.save(self.network.state_dict(), './finally.pkl')
 
 	def test(self,n_eposide):
-		self.network.load_state_dict(torch.load('./parameter.pkl'))
+		self.network.load_state_dict(torch.load('./parameter0.pkl'))
 		for i in range(n_eposide):
 			game = Game2048()
 			state = game.matrix
