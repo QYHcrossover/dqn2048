@@ -90,8 +90,8 @@ class Agent:
 			Q_table_next = self.network.forward(feed_next_batch)
 			Q_nextmax = torch.Tensor(self.batch_size).to("cuda")
 			for i in range(self.batch_size):
-				state = state_batch[i]
-				legal_actions = Game2048.legal_moves(state)
+				nextstate = nextstate_batch[i]
+				legal_actions = Game2048.legal_moves(nextstate)
 				Q_nextmax[i] = torch.max(Q_table_next[legal_actions]) if legal_actions else 0
 			#Q_现实公式
 			Q_label = torch.Tensor(reward_batch).cuda() + self.reward_decay * Q_nextmax
@@ -105,9 +105,9 @@ class Agent:
 
 	def update_all_batch(self):
 		all_loss = 0
-		for bs in range(0,self.memory_size-self.batch_size,self.batch_size):
+		for i in range(self.memory_size,0,-self.batch_size):
 			memory = list(self.memory)
-			state_batch,action_batch,nextstate_batch,reward_batch,isover_batch = zip(*memory[bs:bs+self.batch_size])
+			state_batch,action_batch,nextstate_batch,reward_batch,isover_batch = zip(*memory[i-self.batch_size:i])
 			feed_batch = torch.from_numpy(self.transform_state(state_batch)).to("cuda")
 
 			#计算Q估计
@@ -121,8 +121,8 @@ class Agent:
 				Q_table_next = self.network.forward(feed_next_batch)
 				Q_nextmax = torch.Tensor(self.batch_size).to("cuda")
 				for i in range(self.batch_size):
-					state = state_batch[i]
-					legal_actions = Game2048.legal_moves(state)
+					nextstate = nextstate_batch[i]
+					legal_actions = Game2048.legal_moves(nextstate)
 					Q_nextmax[i] = torch.max(Q_table_next[legal_actions]) if legal_actions else 0
 				#Q_现实公式
 				Q_label = torch.Tensor(reward_batch).cuda() + self.reward_decay * Q_nextmax
@@ -133,9 +133,9 @@ class Agent:
 			self.optimizer.zero_grad()
 			loss.backward()
 			self.optimizer.step()
-		print("\n{}th train ends with {} loss\n".format(self.train_steps,all_loss/(self.memory_size//self.batch_size)))
+		print("\n{} th train ends with {} loss".format(self.train_steps,all_loss/(self.memory_size//self.batch_size)))
 
-	def train(self):
+	def train(self,mode):
 		while self.eposide < self.max_eposide:
 			game = Game2048()
 			state = game.matrix
@@ -154,7 +154,12 @@ class Agent:
 				(local_steps,self.total_steps) = (local_steps+1,self.total_steps+1) #局部计数器和全局计数器加一
 				if len(self.memory) >= self.memory_size:
 					self.train_steps += 1
-					self.update_all_batch()
+					if mode == "random":
+						self.update_randomsample()
+					else:
+						for i in range(4):
+							self.update_all_batch()
+						self.memory = deque(maxlen=self.memory_size)
 					# print("the {}th training ends".format(self.train_steps))
 					if self.train_steps % self.save_per_iter == 0:
 						torch.save(self.network.state_dict(), './parameter{}.pkl'.format(self.train_steps // self.save_per_iter%20))
@@ -168,6 +173,7 @@ class Agent:
 			self.max_score = game.score if game.score>self.max_score else self.max_score
 			print("\nEposide{} finished with score:{} maxnumber:{} steps={} ,details:".format(self.eposide,game.score,game.maxnum,local_steps))
 			print(game.matrix,"epsilon:{}".format(self.epsilon))
+			print("up to now max score:{} max number:{}".format(self.max_score,self.max_num))
 			self.record.append((self.eposide,game.score,game.maxnum,local_steps)) #每局游戏记录局号、一局走了几步、游戏分数
 			#更新最优参数
 			self.eposide += 1
@@ -179,17 +185,27 @@ class Agent:
 			game = Game2048()
 			state = game.matrix
 			local_steps = 0
-			while not game.isover:
-				action = self.chooseAction(game.matrix,e_greedy=False)
-				reward,_ = game.step(game.matrix,action)
+			while True:
+				actionList = self.chooseAction(state,e_greedy=False)
+				action,reward = game.step(state,actionList)
 				# print(game.matrix)
 				local_steps += 1
+				nextstate = game.matrix
+				if game.isover: 
+					break
+				else:
+					state = nextstate.copy()
 			print("{}th eposide : gamescore={} maxnumber={} steps = {}".format(self.eposide,game.score,game.maxnum,local_steps))
 			self.record.append((self.eposide,game.score,game.maxnum,local_steps)) #每局游戏记录局号、一局走了几步、游戏分数
+			print(game.matrix)
 			self.eposide += 1
+		print(sum(r[1] for r in self.record)/len(self.record))
+		print(max(r[2] for r in self.record))
 
 if __name__ == "__main__":
+	# agent = Agent(memory_size=5120,batch_size=512)
+	# agent.train(mode="batch")
 	agent = Agent()
-	agent.train()
+	agent.test(1000)
 
 	
