@@ -120,6 +120,9 @@ class Game2048:
 		self.generate()
 		#分别返回真实action和reward
 		reward = 0.0 if movescore == 0 else np.log2(movescore)/15
+		#更改reward
+		delta_max = np.max(nextstate) - np.max(state)
+		reward = reward + np.log2(np.max(nextstate))/15 if delta_max!= 0 else reward
 		return trueAction,reward
 
 if __name__ == "__main__":
