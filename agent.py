@@ -73,7 +73,7 @@ class Agent:
 		result = self.network.forward(feed)
 		return result.cpu().detach().numpy()[0]
 
-	def update(self):
+	def update_randomsample(self):
 		#从memeory中采样batch_size个
 		sample_batch = random.sample(self.memory,self.batch_size)
 		state_batch,action_batch,nextstate_batch,reward_batch,isover_batch = zip(*sample_batch)
@@ -82,37 +82,79 @@ class Agent:
 		#计算Q估计
 		Q_table = self.network.forward(feed_batch) #Qtable
 		#从Q_table中获得Q(s,a)也就是Q估计
-		Q_eval = Q_table[np.arange(self.batch_size),action_batch]
+		Q_predict = Q_table[np.arange(self.batch_size),action_batch]
 
 		#计算Q现实
-		feed_next_batch = torch.from_numpy(self.transform_state(nextstate_batch)).to("cuda")
-		Q_table_next = self.network.forward(feed_next_batch)
-		Q_table_next_max , _ = torch.max(Q_table_next,dim=1)
-		#对于终止状态的Q值置0
-		Q_table_next_max[isover_batch] = 0
-		#Q_现实公式
-		Q_target = torch.Tensor(reward_batch).cuda() + self.reward_decay * Q_table_next_max
+		with torch.no_grad():
+			feed_next_batch = torch.from_numpy(self.transform_state(nextstate_batch)).to("cuda")
+			Q_table_next = self.network.forward(feed_next_batch)
+			Q_nextmax = torch.Tensor(self.batch_size).to("cuda")
+			for i in range(self.batch_size):
+				state = state_batch[i]
+				legal_actions = Game2048.legal_moves(state)
+				Q_nextmax[i] = torch.max(Q_table_next[legal_actions]) if legal_actions else 0
+			#Q_现实公式
+			Q_label = torch.Tensor(reward_batch).cuda() + self.reward_decay * Q_nextmax
 
 		#计算loss并更新
-		loss = self.loss_fn(Q_target, Q_eval)
+		loss = self.loss_fn(Q_predict, Q_label)
+		print("\n{} th train starts with {} loss".format(self.train_steps,loss))
 		self.optimizer.zero_grad()
 		loss.backward()
 		self.optimizer.step()
+
+	def update_all_batch(self):
+		all_loss = 0
+		for bs in range(0,self.memory_size-self.batch_size,self.batch_size):
+			memory = list(self.memory)
+			state_batch,action_batch,nextstate_batch,reward_batch,isover_batch = zip(*memory[bs:bs+self.batch_size])
+			feed_batch = torch.from_numpy(self.transform_state(state_batch)).to("cuda")
+
+			#计算Q估计
+			Q_table = self.network.forward(feed_batch) #Qtable
+			#从Q_table中获得Q(s,a)也就是Q估计
+			Q_predict = Q_table[np.arange(self.batch_size),action_batch]
+
+			#计算Q现实
+			with torch.no_grad():
+				feed_next_batch = torch.from_numpy(self.transform_state(nextstate_batch)).to("cuda")
+				Q_table_next = self.network.forward(feed_next_batch)
+				Q_nextmax = torch.Tensor(self.batch_size).to("cuda")
+				for i in range(self.batch_size):
+					state = state_batch[i]
+					legal_actions = Game2048.legal_moves(state)
+					Q_nextmax[i] = torch.max(Q_table_next[legal_actions]) if legal_actions else 0
+				#Q_现实公式
+				Q_label = torch.Tensor(reward_batch).cuda() + self.reward_decay * Q_nextmax
+
+			#计算loss并更新
+			loss = self.loss_fn(Q_predict, Q_label)
+			all_loss += loss.item()
+			self.optimizer.zero_grad()
+			loss.backward()
+			self.optimizer.step()
+		print("\n{}th train ends with {} loss\n".format(self.train_steps,all_loss/(self.memory_size//self.batch_size)))
 
 	def train(self):
 		while self.eposide < self.max_eposide:
 			game = Game2048()
 			state = game.matrix
 			local_steps = 0
+			# print(game.matrix)
 			while True:
+				# print("{}th before current_score {}".format(local_steps,game.score))
+				# print(game.matrix,np.array_equal(game.matrix,state))
 				actionList = self.chooseAction(state,e_greedy=True)
 				action,reward = game.step(state,actionList)
 				nextstate = game.matrix
+				# print(state,game.score)
 				self.memory.append((state,action,nextstate,reward,game.isover)) #保存状态
+				# print("{}th after current_score {}".format(local_steps,game.score))
+				# print(game.matrix,np.array_equal(game.matrix,nextstate))
 				(local_steps,self.total_steps) = (local_steps+1,self.total_steps+1) #局部计数器和全局计数器加一
 				if len(self.memory) >= self.memory_size:
 					self.train_steps += 1
-					self.update()
+					self.update_all_batch()
 					# print("the {}th training ends".format(self.train_steps))
 					if self.train_steps % self.save_per_iter == 0:
 						torch.save(self.network.state_dict(), './parameter{}.pkl'.format(self.train_steps // self.save_per_iter%20))
@@ -121,7 +163,7 @@ class Agent:
 				if game.isover: 
 					break
 				else:
-					state = nextstate
+					state = nextstate.copy()
 			self.max_num = game.maxnum if game.maxnum>self.max_num else self.max_num
 			self.max_score = game.score if game.score>self.max_score else self.max_score
 			print("\nEposide{} finished with score:{} maxnumber:{} steps={} ,details:".format(self.eposide,game.score,game.maxnum,local_steps))

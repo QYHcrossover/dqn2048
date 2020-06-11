@@ -22,7 +22,8 @@ class Game2048:
 		index = np.random.randint(len(x))
 		self.matrix[x[index]][y[index]] = 2 if random.random() < 0.9 else 4
 
-	def move(self,action): #移动并合并
+	@staticmethod
+	def move(state,action): #移动并合并
 		# assert action in ["up","down","left","right"]
 		def move_one(array): #单列移动、合并,并返回sorce
 			origin = array.copy()
@@ -43,22 +44,21 @@ class Game2048:
 		movescore = 0
 		ismove = False
 		if action in ("w","s",0,1):
-			for i in range(self.matrix_size):
-				feed = self.matrix[:,i] if action in ("w",0) else self.matrix[:,i][::-1]
+			for i in range(4):
+				feed = state[:,i] if action in ("w",0) else state[:,i][::-1]
 				isonemove,array,onescore = move_one(feed)
 				ismove = ismove or isonemove
-				self.matrix[:,i] = array if action in ("w",0) else array[::-1]
+				state[:,i] = array if action in ("w",0) else array[::-1]
 				movescore += onescore
 
 		if action in ("a","d",2,3):
-			for i in range(self.matrix_size):
-				feed = self.matrix[i] if action in ("a",2) else self.matrix[i][::-1]
+			for i in range(4):
+				feed = state[i] if action in ("a",2) else state[i][::-1]
 				isonemove,array,onescore = move_one(feed)
 				ismove = ismove or isonemove
-				self.matrix[i] = array if action in ("a",2) else array[::-1]
+				state[i] = array if action in ("a",2) else array[::-1]
 				movescore += onescore
-		self.score += movescore
-		return ismove,movescore
+		return ismove,movescore,state
 
 	@property
 	def maxnum(self):
@@ -91,18 +91,32 @@ class Game2048:
 			if self.isover:
 				break
 			action = input("").strip().lower()
-			ismove,movescore = self.move(action)
+			ismove,movescore,nextstate = self.move(self.matrix,action)
+			self.matrix = nextstate
+			self.score += movescore
 			if ismove:
 				self.generate()
 
-	#为dqn准备的API,比较关键的一步是对action的合法检验,这边的action都统一用向量表示，方便选取
+	@staticmethod
+	def legal_moves(state):
+		lms = []
+		for action in range(4):
+			ismove = Game2048.move(state,action)[0]
+			if ismove:
+				lms.append(action)
+		return lms
+	
+	#为dqn准备的API
 	def step(self,state,actionList):
 		index = np.argsort(-actionList)
 		for action in index:
-			ismove,movescore = self.move(action)
+			ismove,movescore,nextstate = self.move(state,action)
 			if ismove:
 				trueAction = action
 				break
+		# print("movescore{}".format(movescore))
+		self.matrix = nextstate
+		self.score = self.score + movescore
 		self.generate()
 		#分别返回真实action和reward
 		reward = 0.0 if movescore == 0 else np.log2(movescore)/15
