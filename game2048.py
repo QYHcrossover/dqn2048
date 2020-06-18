@@ -101,13 +101,14 @@ class Game2048:
 	def legal_moves(state):
 		lms = []
 		for action in range(4):
-			ismove = Game2048.move(state,action)[0]
+			ismove = Game2048.move(state.copy(),action)[0]
 			if ismove:
 				lms.append(action)
 		return lms
 	
 	#为dqn准备的API
 	def step(self,state,actionList):
+		empty0 = sum(sum(state))
 		index = np.argsort(-actionList)
 		for action in index:
 			ismove,movescore,nextstate = self.move(state,action)
@@ -115,11 +116,13 @@ class Game2048:
 				trueAction = action
 				break
 		# print("movescore{}".format(movescore))
+		empty1 = sum(sum(nextstate))
 		self.matrix = nextstate
 		self.score = self.score + movescore
 		self.generate()
 		#分别返回真实action和reward
-		reward = 0.0 if movescore == 0 else np.log2(movescore)/15
+		# reward = 0.0 if movescore == 0 else np.log2(movescore)/15
+		reward = (empty1-empty0)/15
 		#更改reward
 		delta_max = np.max(nextstate) - np.max(state)
 		reward = reward + np.log2(np.max(nextstate))/15 if delta_max!= 0 else reward

@@ -19,19 +19,21 @@ class Agent:
 		self,
 		batch_size = 32,
 		max_eposide = 200000,
-		save_per_iter = 400,
+		save_per_iter = 20,
 		memory_size = 6000,
 		):
 		#dqn基础参数
 		self.epsilon = 0.9 #初始探索率较高
-		self.reward_decay = 0.9 #衰减因子
+		self.reward_decay = 1 #衰减因子
 		self.memory_size = memory_size
 		self.memory = deque(maxlen=memory_size) #经验池
 		#network相关
 		self.batch_size = batch_size #batch_size
 		self.network = Network().cuda() #决策网络
 		self.network.apply(Network.initWeights)
-		self.optimizer = torch.optim.Adam(self.network.parameters(), lr=1e-4) #todo,学习率衰减
+		# self.optimizer = torch.optim.Adam(self.network.parameters(), lr=1e-4) #todo,学习率衰减
+		self.optimizer = torch.optim.RMSprop(self.network.parameters(),lr=0.0005) #todo,学习率衰减
+		self.scheduler = torch.optim.lr_scheduler.StepLR(optimizer=self.optimizer,step_size=1000,gamma=0.9)
 		self.loss_fn = nn.MSELoss()
 		#训练控制相关
 		self.max_eposide = max_eposide #最大eposide大小
@@ -128,6 +130,7 @@ class Agent:
 				Q_label = torch.Tensor(reward_batch).cuda() + self.reward_decay * Q_nextmax
 
 			#计算loss并更新
+			self.scheduler.step()
 			loss = self.loss_fn(Q_predict, Q_label)
 			all_loss += loss.item()
 			self.optimizer.zero_grad()
@@ -135,7 +138,9 @@ class Agent:
 			self.optimizer.step()
 		print("\n{} th train ends with {} loss".format(self.train_steps,all_loss/(self.memory_size//self.batch_size)))
 
-	def train(self,mode):
+	def train(self,mode,modelpath=None):
+		if modelpath:
+			self.network.load_state_dict(torch.load(modelpath))
 		while self.eposide < self.max_eposide:
 			game = Game2048()
 			state = game.matrix
@@ -154,10 +159,11 @@ class Agent:
 				(local_steps,self.total_steps) = (local_steps+1,self.total_steps+1) #局部计数器和全局计数器加一
 				if len(self.memory) >= self.memory_size:
 					self.train_steps += 1
+					print("{} th train's learning rate :{}".format(self.train_steps,self.scheduler.get_lr()))
 					if mode == "random":
 						self.update_randomsample()
 					else:
-						for i in range(4):
+						for i in range(1):
 							self.update_all_batch()
 						self.memory = deque(maxlen=self.memory_size)
 					# print("the {}th training ends".format(self.train_steps))
@@ -203,9 +209,9 @@ class Agent:
 		print(max(r[2] for r in self.record))
 
 if __name__ == "__main__":
-	# agent = Agent(memory_size=5120,batch_size=512)
-	# agent.train(mode="batch")
-	agent = Agent()
-	agent.test(1000)
+	agent = Agent(memory_size=5120,batch_size=512)
+	agent.train(mode="batch")
+	# agent = Agent()
+	# agent.test(1000)
 
 	
